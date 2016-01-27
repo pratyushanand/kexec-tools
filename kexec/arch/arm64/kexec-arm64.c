@@ -128,9 +128,6 @@ int arch_process_options(int argc, char **argv)
 		case OPT_INITRD:
 			arm64_opts.initrd = optarg;
 			break;
-		case OPT_PANIC:
-			die("load-panic (-p) not supported");
-			break;
 		default:
 			break; /* Ignore core and unknown options. */
 		}
@@ -285,8 +282,12 @@ on_success:
  * setup_2nd_dtb - Setup the 2nd stage kernel's dtb.
  */
 
-static int setup_2nd_dtb(struct dtb *dtb, char *command_line)
+static int setup_2nd_dtb(struct dtb *dtb, char *command_line, int on_crash)
 {
+	char *new_buf;
+	int new_size;
+	int nodeoffset;
+	uint64_t range[2];
 	int result;
 
 	result = fdt_check_header(dtb->buf);
@@ -298,7 +299,66 @@ static int setup_2nd_dtb(struct dtb *dtb, char *command_line)
 
 	result = set_bootargs(dtb, command_line);
 
+	if (on_crash) {
+		nodeoffset = fdt_path_offset(dtb->buf, "/chosen");
+		fdt_delprop(dtb->buf, nodeoffset, "linux,elfcorehdr");
+		fdt_delprop(dtb->buf, nodeoffset, "linux,usable-memory-range");
+		new_size = fdt_totalsize(dtb->buf)
+			+ 2 * (sizeof(struct fdt_property)
+					+ FDT_TAGALIGN(sizeof(range)))
+			+ strlen("linux,elfcorehdr") + 1
+			+ strlen("linux,usable-memory-range") + 1;
+
+		new_buf = xmalloc(new_size);
+		result = fdt_open_into(dtb->buf, new_buf, new_size);
+		if (result) {
+			dbgprintf("%s: fdt_open_into failed: %s\n", __func__,
+				fdt_strerror(result));
+			result = -ENOSPC;
+			goto on_error;
+		}
+
+		range[0] = cpu_to_be64(elfcorehdr_mem.start);
+		range[1] = cpu_to_be64(elfcorehdr_mem.end
+				- elfcorehdr_mem.start + 1);
+		nodeoffset = fdt_path_offset(new_buf, "/chosen");
+		result = fdt_setprop(new_buf, nodeoffset, "linux,elfcorehdr",
+				(void *)range, sizeof(range));
+		if (result) {
+			dbgprintf("%s: fdt_setprop failed: %s\n", __func__,
+				fdt_strerror(result));
+			result = -EINVAL;
+			goto on_error;
+		}
+
+		range[0] = cpu_to_be64(crash_reserved_mem.start);
+		range[1] = cpu_to_be64(crash_reserved_mem.end
+				- crash_reserved_mem.start + 1);
+		nodeoffset = fdt_path_offset(new_buf, "/chosen");
+		result = fdt_setprop(new_buf, nodeoffset,
+				"linux,usable-memory-range",
+				(void *)range, sizeof(range));
+		if (result) {
+			dbgprintf("%s: fdt_setprop failed: %s\n", __func__,
+				fdt_strerror(result));
+			result = -EINVAL;
+			goto on_error;
+		}
+
+		fdt_pack(new_buf);
+		dtb->buf = new_buf;
+		dtb->size = fdt_totalsize(new_buf);
+	}
+
 	dump_reservemap(dtb);
+
+
+	return result;
+
+on_error:
+	fprintf(stderr, "kexec: %s failed.\n", __func__);
+	if (new_buf)
+		free(new_buf);
 
 	return result;
 }
@@ -367,7 +427,8 @@ int arm64_load_other_segments(struct kexec_info *info,
 		}
 	}
 
-	result = setup_2nd_dtb(&dtb, command_line);
+	result = setup_2nd_dtb(&dtb, command_line,
+			info->kexec_flags & KEXEC_ON_CRASH);
 
 	if (result)
 		return -EFAILED;
