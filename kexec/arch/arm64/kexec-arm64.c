@@ -142,6 +142,9 @@ int arch_process_options(int argc, char **argv)
 		case OPT_INITRD:
 			arm64_opts.initrd = optarg;
 			break;
+		case OPT_PORT:
+			arm64_opts.port = strtoull(optarg, NULL, 0);
+			break;
 		default:
 			break; /* Ignore core and unknown options. */
 		}
@@ -154,8 +157,78 @@ int arch_process_options(int argc, char **argv)
 	dbgprintf("%s:%d: initrd: %s\n", __func__, __LINE__,
 		arm64_opts.initrd);
 	dbgprintf("%s:%d: dtb: %s\n", __func__, __LINE__, arm64_opts.dtb);
+	dbgprintf("%s:%d: port: 0x%" PRIx64 "\n", __func__, __LINE__,
+		arm64_opts.port);
 
 	return 0;
+}
+
+/**
+ * find_purgatory_sink - Find a sink for purgatory output.
+ */
+
+static uint64_t find_purgatory_sink(const char *command_line)
+{
+	struct data {const char *name;
+			int tx_offset;
+			int lsr_offset;
+			unsigned char lsr_val;};
+	static const struct data ok_list[] = {
+		{"exynos4210-uart", 0x20},
+		{"ns16550", 0},
+		{"ns16550a", 0},
+		{"pl011", 0},
+		{"uart8250", 0},
+		{NULL, 0}
+	};
+	uint64_t addr;
+	const char *p;
+	const char *device;
+	const struct data *ok;
+
+	if (arm64_opts.port)
+		return arm64_opts.port;
+
+	if (!command_line)
+		return 0;
+
+	if (!(p = strstr(command_line, "earlyprintk=")) &&
+		!(p = strstr(command_line, "earlycon=")))
+		return 0;
+
+	p = strchr(p, '=');
+	p++;
+
+	device = p;
+
+	p = strchr(p, ',');
+
+	if (!p)
+		return 0;
+
+	p++;
+
+	for (ok = ok_list; ok->name; ok++) {
+		int len = strlen(ok->name);
+
+		if (device[len] == ',' && !memcmp(device, ok->name, len))
+			break;
+	}
+
+	if (!ok->name) {
+		fprintf(stderr,
+			"kexec: %s: Warning: Non-compatible earlycon device found: %s.\n",
+			__func__, device);
+		return 0;
+	}
+
+	if (!*p)
+		return 0;
+
+	errno = 0;
+	addr = strtoull(p, NULL, 0);
+
+	return errno ? 0 : addr + ok->tx_offset;
 }
 
 /**
@@ -652,6 +725,7 @@ int arm64_load_other_segments(struct kexec_info *info,
 	unsigned long hole_min;
 	unsigned long hole_max;
 	unsigned long initrd_end;
+	uint64_t purgatory_sink;
 	char *initrd_buf = NULL;
 	struct dtb dtb;
 	char command_line[COMMAND_LINE_SIZE] = "";
@@ -661,6 +735,11 @@ int arm64_load_other_segments(struct kexec_info *info,
 			sizeof(command_line));
 		command_line[sizeof(command_line) - 1] = 0;
 	}
+
+	purgatory_sink = find_purgatory_sink(command_line);
+
+	dbgprintf("%s:%d: purgatory sink: 0x%" PRIx64 "\n", __func__, __LINE__,
+		purgatory_sink);
 
 	if (arm64_opts.dtb) {
 		dtb.name = "dtb_user";
@@ -744,6 +823,9 @@ int arm64_load_other_segments(struct kexec_info *info,
 		hole_min, hole_max, 1, 0);
 
 	info->entry = (void *)elf_rel_get_addr(&info->rhdr, "purgatory_start");
+
+	elf_rel_set_symbol(&info->rhdr, "arm64_sink", &purgatory_sink,
+		sizeof(purgatory_sink));
 
 	elf_rel_set_symbol(&info->rhdr, "arm64_kernel_entry", &image_base,
 		sizeof(image_base));
