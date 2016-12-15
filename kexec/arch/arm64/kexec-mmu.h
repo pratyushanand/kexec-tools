@@ -5,6 +5,25 @@
 
 #if !defined(KEXEC_MMU_H)
 #define KEXEC_MMU_H
+
+#define SCTLR_ELx_I		(1 << 12)
+#define SCTLR_ELx_C		(1 << 2)
+#define SCTLR_ELx_M		(1 << 0)
+#define SCTLR_ELx_FLAGS 	(SCTLR_ELx_M | SCTLR_ELx_C | SCTLR_ELx_I)
+#define TCR_SHARED_NONE		(0 << 12)
+#define TCR_ORGN_WBWA		(1 << 10)
+#define TCR_IRGN_WBWA		(1 << 8)
+#define TCR_T0SZ_48		16
+#define TCR_TG0_4K		(0 << 14)
+#define TCR_FLAGS 		(TCR_SHARED_NONE | TCR_ORGN_WBWA |\
+				TCR_IRGN_WBWA | TCR_T0SZ_48 | TCR_TG0_4K)
+#define TCR_IPS_EL1_SHIFT	32
+#define TCR_IPS_EL2_SHIFT	16
+#define ID_AA64MMFR0_TGRAN4_SHIFT	28
+#define ID_AA64MMFR0_PARANGE_MASK	0xF
+#define MT_NORMAL		0
+#define MEMORY_ATTRIBUTES	(0xFF << (MT_NORMAL*8))
+
 /*
  * kexec creates identity page table to be used in purgatory so that
  * SHA verification of the image can make use of the dcache.
@@ -32,7 +51,6 @@
 #define PMD_TYPE_SECT		(1UL << 0)
 #define PMD_SECT_AF		(1UL << 10)
 #define PMD_ATTRINDX(t)		((unsigned long)(t) << 2)
-#define MT_NORMAL		0
 #define PMD_FLAGS_NORMAL	(PMD_TYPE_SECT | PMD_SECT_AF)
 #define MMU_FLAGS_NORMAL	(PMD_ATTRINDX(MT_NORMAL) | PMD_FLAGS_NORMAL)
 #define SECTION_SHIFT		PMD_SHIFT
