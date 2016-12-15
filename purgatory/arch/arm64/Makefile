@@ -11,6 +11,7 @@ arm64_PURGATORY_EXTRA_CFLAGS = \
 
 arm64_PURGATORY_SRCS += \
 	purgatory/arch/arm64/entry.S \
+	purgatory/arch/arm64/cache.S \
 	purgatory/arch/arm64/purgatory-arm64.c
 
 dist += \
