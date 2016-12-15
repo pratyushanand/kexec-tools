@@ -17,6 +17,7 @@
 
 #include "kexec.h"
 #include "kexec-arm64.h"
+#include "kexec-mmu.h"
 #include "crashdump.h"
 #include "crashdump-arm64.h"
 #include "dt-ops.h"
@@ -33,7 +34,11 @@
 #define PROP_ELFCOREHDR "linux,elfcorehdr"
 #define PROP_USABLE_MEM_RANGE "linux,usable-memory-range"
 
-/* Global varables the core kexec routines expect. */
+typedef unsigned long guest_addr_t;
+typedef unsigned long host_addr_t;
+static int next_tbl_cnt = 1;
+
+/* Global variables the core kexec routines expect. */
 
 unsigned char reuse_initrd;
 
@@ -519,6 +524,122 @@ unsigned long arm64_locate_kernel_segment(struct kexec_info *info)
 	return hole;
 }
 
+static host_addr_t *create_table_entry(host_addr_t *pgtbl_buf,
+		guest_addr_t pgtbl_mem, host_addr_t *tbl,
+		guest_addr_t virt, int shift,
+		unsigned long ptrs)
+{
+	unsigned long index, desc, offset;
+
+	index = (virt >> shift) & (ptrs - 1);
+	/* check if we have allocated a table already for this index */
+	if (tbl[index]) {
+		/*
+		 * table index will have entry as per purgatory (guest)page
+		 * table memory. Find out corresponding buffer address of
+		 * table (host).
+		 */
+		desc = tbl[index] & ~3UL;
+		offset = desc - pgtbl_mem;
+		return &pgtbl_buf[offset >> 3];
+	}
+
+	if (next_tbl_cnt >= MAX_PGTBLE_SZ / PAGE_SIZE)
+		die("%s:No more memory for page table\n", __func__);
+	/*
+	 * Always write page table content as per page table memory
+	 * allocated for purgatory(guest) area, but return corresponding
+	 * buffer area allocated in kexec (host).
+	 */
+
+	tbl[index] = (pgtbl_mem + PAGE_SIZE * next_tbl_cnt) | PMD_TYPE_TABLE;
+
+	return &pgtbl_buf[(next_tbl_cnt++ * PAGE_SIZE) >> 3];
+}
+
+static void create_block_entry(host_addr_t *tbl, unsigned long flags,
+				guest_addr_t virt)
+{
+	unsigned long index;
+	unsigned long desc;
+
+	index = pmd_index(virt);
+	desc = virt & PMD_MASK;
+	desc |= flags;
+	tbl[index] = desc;
+}
+
+static void create_identity_entry(host_addr_t *pgtbl_buf,
+		guest_addr_t pgtbl_mem, guest_addr_t virt,
+		unsigned long flags)
+{
+	host_addr_t *tbl = pgtbl_buf;
+
+	/*
+	 * use similar implementation as kernel is doing for
+	 * SWAPPER_PGTABLE_LEVELS = PGTABLE_LEVELS - 1 = 3
+	 */
+	tbl = create_table_entry(pgtbl_buf, pgtbl_mem, tbl, virt,
+			PGDIR_SHIFT, PTRS_PER_PGD);
+	tbl = create_table_entry(pgtbl_buf, pgtbl_mem, tbl, virt,
+			SWAPPER_TABLE_SHIFT, PTRS_PER_PTE);
+	create_block_entry(tbl, flags, virt);
+}
+
+/**
+ * arm64_create_pgtbl_segment - Create page table segments to be used by
+ * purgatory. Page table will have entries to access memory area of all
+ * those segments which becomes part of sha verification in purgatory.
+ * Additionally, we also create page table for purgatory segment as well.
+ */
+
+static int arm64_create_pgtbl_segment(struct kexec_info *info,
+		unsigned long hole_min, unsigned long hole_max)
+{
+	host_addr_t *pgtbl_buf;
+	guest_addr_t pgtbl_mem, mstart, mend;
+	int i;
+	unsigned long purgatory_base, purgatory_len;
+
+	pgtbl_buf = xmalloc(MAX_PGTBLE_SZ);
+	memset(pgtbl_buf, 0, MAX_PGTBLE_SZ);
+	pgtbl_mem = add_buffer_phys_virt(info, pgtbl_buf, MAX_PGTBLE_SZ,
+			MAX_PGTBLE_SZ, PAGE_SIZE, hole_min, hole_max, 1, 0);
+	for (i = 0; i < info->nr_segments; i++) {
+		if (info->segment[i].mem == (void *)info->rhdr.rel_addr) {
+			purgatory_base = (unsigned long)info->segment[i].mem;
+			purgatory_len = info->segment[i].memsz;
+		}
+		mstart = (unsigned long)info->segment[i].mem;
+		mend = mstart + info->segment[i].memsz;
+		mstart &= ~(SECTION_SIZE - 1);
+		while (mstart < mend) {
+			create_identity_entry(pgtbl_buf, pgtbl_mem,
+					mstart, MMU_FLAGS_NORMAL);
+			mstart += SECTION_SIZE;
+		}
+	}
+
+	/* we will need pgtble_base in purgatory for enabling d-cache */
+	elf_rel_set_symbol(&info->rhdr, "pgtble_base", &pgtbl_mem,
+		sizeof(pgtbl_mem));
+	/*
+	 * We need to disable d-cache before we exit from purgatory.
+	 * Since, only d-cache flush by VAs is recommended, therefore we
+	 * will also need memory location of all those area which will be
+	 * accessed in purgatory with enabled d-cache. sha256_regions
+	 * already have start and length for all the segments except
+	 * purgatory. Therefore, we will need to pass start and length of
+	 * purgatory additionally.
+	 */
+	elf_rel_set_symbol(&info->rhdr, "purgatory_base", &purgatory_base,
+		sizeof(purgatory_base));
+	elf_rel_set_symbol(&info->rhdr, "purgatory_len", &purgatory_len,
+		sizeof(purgatory_len));
+
+	return 0;
+}
+
 /**
  * arm64_load_other_segments - Prepare the dtb, initrd and purgatory segments.
  */
@@ -629,6 +750,8 @@ int arm64_load_other_segments(struct kexec_info *info,
 
 	elf_rel_set_symbol(&info->rhdr, "arm64_dtb_addr", &dtb_base,
 		sizeof(dtb_base));
+
+	arm64_create_pgtbl_segment(info, hole_min, hole_max);
 
 	return 0;
 }
