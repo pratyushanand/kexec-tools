@@ -15,6 +15,8 @@
 #include <errno.h>
 #include <linux/elf.h>
 
+#include <arch/options.h>
+
 #include "kexec.h"
 #include "crashdump.h"
 #include "crashdump-arm64.h"
@@ -179,6 +181,7 @@ int load_crashdump_segments(struct kexec_info *info)
 	unsigned long bufsz;
 	void *buf;
 	int err;
+	char option[100];
 
 	/*
 	 * First fetch all the memory (RAM) ranges that we are going to
@@ -207,6 +210,14 @@ int load_crashdump_segments(struct kexec_info *info)
 
 	elfcorehdr_mem.start = elfcorehdr;
 	elfcorehdr_mem.end = elfcorehdr + bufsz - 1;
+
+	if (!get_kernel_sym("early_init_dt_scan_elfcorehdr")) {
+		/* only to support rhelsa7.3 */
+		sprintf(&option[0], " elfcorehdr=%#lx@%#lx mem=%#llx",
+				bufsz, elfcorehdr,
+				crash_reserved_mem.end - crash_reserved_mem.start + 1);
+		arm64_opts.command_line = concat_cmdline(arm64_opts.command_line, option);
+	}
 
 	dbgprintf("%s: elfcorehdr 0x%llx-0x%llx\n", __func__,
 			elfcorehdr_mem.start, elfcorehdr_mem.end);
