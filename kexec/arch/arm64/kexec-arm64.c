@@ -243,6 +243,12 @@ static void find_purgatory_sink(const char *command_line,
 	if (!*p)
 		return;
 
+	if (!memcmp(p, "io", 2) || !memcmp(p, "mmio", 4)) {
+		while(*p != ',')
+			p++;
+		p++;
+	}
+
 	errno = 0;
 	addr = strtoull(p, NULL, 0);
 
