@@ -48,6 +48,7 @@ void putchar(int ch)
 void post_verification_setup_arch(void)
 {
 	disable_dcache();
+	printf("purgatory: D-cache Disabled after SHA verification\n");
 }
 
 void setup_arch(void)
@@ -55,4 +56,5 @@ void setup_arch(void)
 	printf("purgatory: entry=%lx\n", (unsigned long)arm64_kernel_entry);
 	printf("purgatory: dtb=%lx\n", arm64_dtb_addr);
 	enable_dcache();
+	printf("purgatory: D-cache Enabled before SHA verification\n");
 }

@@ -695,7 +695,8 @@ static void create_identity_entry(host_addr_t *pgtbl_buf,
  */
 
 static int arm64_create_pgtbl_segment(struct kexec_info *info,
-		unsigned long hole_min, unsigned long hole_max)
+		unsigned long hole_min, unsigned long hole_max,
+		uint64_t purgatory_sink)
 {
 	host_addr_t *pgtbl_buf;
 	guest_addr_t pgtbl_mem, mstart, mend;
@@ -720,6 +721,9 @@ static int arm64_create_pgtbl_segment(struct kexec_info *info,
 			mstart += SECTION_SIZE;
 		}
 	}
+	create_identity_entry(pgtbl_buf, pgtbl_mem,
+				purgatory_sink & ~(PAGE_SIZE - 1),
+				MMU_FLAGS_DEVICE);
 
 	/* we will need pgtble_base in purgatory for enabling d-cache */
 	elf_rel_set_symbol(&info->rhdr, "pgtble_base", &pgtbl_mem,
@@ -876,7 +880,7 @@ int arm64_load_other_segments(struct kexec_info *info,
 	elf_rel_set_symbol(&info->rhdr, "arm64_dtb_addr", &dtb_base,
 		sizeof(dtb_base));
 
-	arm64_create_pgtbl_segment(info, hole_min, hole_max);
+	arm64_create_pgtbl_segment(info, hole_min, hole_max, purgatory_sink);
 
 	return 0;
 }

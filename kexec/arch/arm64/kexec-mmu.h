@@ -22,7 +22,9 @@
 #define ID_AA64MMFR0_TGRAN4_SHIFT	28
 #define ID_AA64MMFR0_PARANGE_MASK	0xF
 #define MT_NORMAL		0
-#define MEMORY_ATTRIBUTES	(0xFF << (MT_NORMAL*8))
+#define MT_DEVICE_NGNRE		1
+#define MEMORY_ATTRIBUTES	((0x04 << (MT_DEVICE_NGNRE*8)) | \
+				  (0xFF << (MT_NORMAL*8)))
 
 /*
  * kexec creates identity page table to be used in purgatory so that
@@ -50,9 +52,14 @@
 #define PMD_TYPE_TABLE		(3UL << 0)
 #define PMD_TYPE_SECT		(1UL << 0)
 #define PMD_SECT_AF		(1UL << 10)
+#define PMD_SECT_PXN		(1UL << 53)
+#define PMD_SECT_UXN		(1UL << 54)
+
 #define PMD_ATTRINDX(t)		((unsigned long)(t) << 2)
 #define PMD_FLAGS_NORMAL	(PMD_TYPE_SECT | PMD_SECT_AF)
+#define PMD_FLAGS_DEVICE	(PMD_TYPE_SECT | PMD_SECT_AF | PMD_SECT_PXN | PMD_SECT_UXN)
 #define MMU_FLAGS_NORMAL	(PMD_ATTRINDX(MT_NORMAL) | PMD_FLAGS_NORMAL)
+#define MMU_FLAGS_DEVICE	(PMD_ATTRINDX(MT_DEVICE_NGNRE) | PMD_FLAGS_DEVICE)
 #define SECTION_SHIFT		PMD_SHIFT
 #define SECTION_SIZE		(1UL << SECTION_SHIFT)
 #define PAGE_SIZE		(1 << PAGE_SHIFT)
@@ -70,13 +77,13 @@
  * we need to have 5 table size reserved to map any location of the crash
  * kernel region.
  *
- * If we will ever wish to support uart debugging in purgatory then that
- * might cross the boundary and therefore additional 2 more table space. In
- * that case, we will need a total of 7 table space.
+ * When we need to support uart debugging in purgatory then that might
+ * cross the boundary and therefore additional 2 more table space. In that
+ * case, we will need a total of 7 table space.
  *
- * As of now keep it fixed at 5. Increase it if any platform either
- * supports uart or more than 2G of crash kernel size.
+ * As of now keep it fixed at 7. Increase it if any platform supports more
+ * than 2G of crash kernel size.
  */
-#define MAX_PGTBLE_SZ	(5 * PAGE_SIZE)
+#define MAX_PGTBLE_SZ	(7 * PAGE_SIZE)
 
 #endif
