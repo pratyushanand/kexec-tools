@@ -6,7 +6,8 @@
 #define OPT_INITRD		((OPT_MAX)+2)
 #define OPT_REUSE_CMDLINE	((OPT_MAX)+3)
 #define OPT_PORT		((OPT_MAX)+4)
-#define OPT_ARCH_MAX		((OPT_MAX)+5)
+#define OPT_PORT_LSR		((OPT_MAX)+5)
+#define OPT_ARCH_MAX		((OPT_MAX)+6)
 
 #define KEXEC_ARCH_OPTIONS \
 	KEXEC_OPTIONS \
@@ -15,6 +16,7 @@
 	{ "dtb",           1, NULL, OPT_DTB }, \
 	{ "initrd",        1, NULL, OPT_INITRD }, \
 	{ "port",          1, NULL, OPT_PORT }, \
+	{ "port-lsr",      1, NULL, OPT_PORT_LSR }, \
 	{ "ramdisk",       1, NULL, OPT_INITRD }, \
 	{ "reuse-cmdline", 0, NULL, OPT_REUSE_CMDLINE }, \
 
@@ -28,6 +30,7 @@ static const char arm64_opts_usage[] __attribute__ ((unused)) =
 "     --dtb=FILE            Use FILE as the device tree blob.\n"
 "     --initrd=FILE         Use FILE as the kernel initial ramdisk.\n"
 "     --port=ADDRESS        Purgatory output to port ADDRESS.\n"
+"     --port-lsr=ADDR,VAL   Purgatory output port line status address and TX Empty Bit Field.\n"
 "     --ramdisk=FILE        Use FILE as the kernel initial ramdisk.\n"
 "     --reuse-cmdline       Use kernel command line from running system.\n";
 
@@ -36,6 +39,8 @@ struct arm64_opts {
 	const char *dtb;
 	const char *initrd;
 	uint64_t port;
+	uint64_t port_lsr;
+	uint8_t port_lsr_val;
 };
 
 extern struct arm64_opts arm64_opts;

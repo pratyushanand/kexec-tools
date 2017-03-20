@@ -145,6 +145,12 @@ int arch_process_options(int argc, char **argv)
 		case OPT_PORT:
 			arm64_opts.port = strtoull(optarg, NULL, 0);
 			break;
+		case OPT_PORT_LSR:
+			arm64_opts.port_lsr = strtoull(strtok(optarg, ","),
+							NULL, 0);
+			arm64_opts.port_lsr_val = strtoul(strtok(NULL, ","),
+							NULL, 0);
+			break;
 		default:
 			break; /* Ignore core and unknown options. */
 		}
@@ -167,18 +173,21 @@ int arch_process_options(int argc, char **argv)
  * find_purgatory_sink - Find a sink for purgatory output.
  */
 
-static uint64_t find_purgatory_sink(const char *command_line)
+static void find_purgatory_sink(const char *command_line,
+				    uint64_t *sinc,
+				    uint64_t *lsr,
+				    uint8_t *lsr_val)
 {
 	struct data {const char *name;
 			int tx_offset;
 			int lsr_offset;
 			unsigned char lsr_val;};
 	static const struct data ok_list[] = {
-		{"exynos4210-uart", 0x20},
-		{"ns16550", 0},
-		{"ns16550a", 0},
-		{"pl011", 0},
-		{"uart8250", 0},
+		{"exynos4210-uart", 0x20, 0x10, 0x02},
+		{"ns16550", 0, 0x14, 0x60},
+		{"ns16550a", 0, 0x14, 0x60},
+		{"pl011", 0, 0x18, 0x80 },
+		{"uart8250", 0, 0x14, 0x60},
 		{NULL, 0}
 	};
 	uint64_t addr;
@@ -186,15 +195,24 @@ static uint64_t find_purgatory_sink(const char *command_line)
 	const char *device;
 	const struct data *ok;
 
-	if (arm64_opts.port)
-		return arm64_opts.port;
+	*sinc = 0;
+	*lsr = 0;
+
+	if (arm64_opts.port) {
+		*sinc = arm64_opts.port;
+		if (arm64_opts.port_lsr) {
+			*lsr = arm64_opts.port_lsr;
+			*lsr_val = arm64_opts.port_lsr_val;
+		}
+		return;
+	}
 
 	if (!command_line)
-		return 0;
+		return;
 
 	if (!(p = strstr(command_line, "earlyprintk=")) &&
 		!(p = strstr(command_line, "earlycon=")))
-		return 0;
+		return;
 
 	p = strchr(p, '=');
 	p++;
@@ -204,7 +222,7 @@ static uint64_t find_purgatory_sink(const char *command_line)
 	p = strchr(p, ',');
 
 	if (!p)
-		return 0;
+		return;
 
 	p++;
 
@@ -219,16 +237,20 @@ static uint64_t find_purgatory_sink(const char *command_line)
 		fprintf(stderr,
 			"kexec: %s: Warning: Non-compatible earlycon device found: %s.\n",
 			__func__, device);
-		return 0;
+		return;
 	}
 
 	if (!*p)
-		return 0;
+		return;
 
 	errno = 0;
 	addr = strtoull(p, NULL, 0);
 
-	return errno ? 0 : addr + ok->tx_offset;
+	if (!errno) {
+		*sinc = addr + ok->tx_offset;
+		*lsr = addr + ok->lsr_offset;
+		*lsr_val = ok->lsr_val;
+	}
 }
 
 /**
@@ -726,6 +748,8 @@ int arm64_load_other_segments(struct kexec_info *info,
 	unsigned long hole_max;
 	unsigned long initrd_end;
 	uint64_t purgatory_sink;
+	uint64_t purgatory_sink_lsr;
+	uint8_t purgatory_sink_lsr_val;
 	char *initrd_buf = NULL;
 	struct dtb dtb;
 	char command_line[COMMAND_LINE_SIZE] = "";
@@ -736,10 +760,17 @@ int arm64_load_other_segments(struct kexec_info *info,
 		command_line[sizeof(command_line) - 1] = 0;
 	}
 
-	purgatory_sink = find_purgatory_sink(command_line);
+	find_purgatory_sink(command_line, &purgatory_sink,
+			    &purgatory_sink_lsr, &purgatory_sink_lsr_val);
 
 	dbgprintf("%s:%d: purgatory sink: 0x%" PRIx64 "\n", __func__, __LINE__,
 		purgatory_sink);
+
+	dbgprintf("%s:%d: purgatory LSR: 0x%" PRIx64 "\n", __func__, __LINE__,
+		purgatory_sink_lsr);
+
+	dbgprintf("%s:%d: purgatory LSR val: 0x%" PRIx8 "\n", __func__, __LINE__,
+		purgatory_sink_lsr_val);
 
 	if (arm64_opts.dtb) {
 		dtb.name = "dtb_user";
@@ -826,6 +857,12 @@ int arm64_load_other_segments(struct kexec_info *info,
 
 	elf_rel_set_symbol(&info->rhdr, "arm64_sink", &purgatory_sink,
 		sizeof(purgatory_sink));
+
+	elf_rel_set_symbol(&info->rhdr, "arm64_sink_lsr", &purgatory_sink_lsr,
+		sizeof(purgatory_sink_lsr));
+
+	elf_rel_set_symbol(&info->rhdr, "arm64_sink_lsr_val",
+		&purgatory_sink_lsr_val, sizeof(purgatory_sink_lsr_val));
 
 	elf_rel_set_symbol(&info->rhdr, "arm64_kernel_entry", &image_base,
 		sizeof(image_base));
