@@ -32,11 +32,13 @@ static struct memory_ranges system_memory_rgns = {
 };
 
 /* memory range reserved for crashkernel */
-struct memory_range crash_reserved_mem;
+struct memory_range crash_mem[2];
+struct memory_range *crash_reserved_mem;
+struct memory_range *crash_reserved_low_mem;
 struct memory_ranges usablemem_rgns = {
 	.size = 0,
-	.max_size = 1,
-	.ranges = &crash_reserved_mem,
+	.max_size = 2,
+	.ranges = &crash_mem[0],
 };
 
 struct memory_range elfcorehdr_mem;
@@ -103,12 +105,41 @@ static int iomem_range_callback(void *UNUSED(data), int UNUSED(nr),
 	return 0;
 }
 
+int read_mem_regions(void)
+{
+	if (usablemem_rgns.size)
+		return 0;
+
+	kexec_iomem_for_each_line(NULL, iomem_range_callback, NULL);
+
+	if (usablemem_rgns.size == 2) {
+		if (crash_mem[0].start > (unsigned int)-1) {
+			crash_reserved_mem = &crash_mem[0];
+			crash_reserved_low_mem = &crash_mem[1];
+		} else {
+			crash_reserved_mem = &crash_mem[1];
+			crash_reserved_low_mem = &crash_mem[0];
+		}
+	} else if (usablemem_rgns.size == 1){
+		crash_reserved_mem = &crash_mem[0];
+	} else {
+		fprintf(stderr,
+			"Error: Number of crash memory ranges is %d\n",
+			usablemem_rgns.size);
+		usablemem_rgns.size = 0;
+		return -EINVAL;
+	}
+
+	return 0;
+}
+
 int is_crashkernel_mem_reserved(void)
 {
-	if (!usablemem_rgns.size)
-		kexec_iomem_for_each_line(NULL, iomem_range_callback, NULL);
 
-	return crash_reserved_mem.start != crash_reserved_mem.end;
+	if (!read_mem_regions())
+		return crash_reserved_mem->start != crash_reserved_mem->end;
+	else
+		return 0;
 }
 
 /*
@@ -126,21 +157,31 @@ static int crash_get_memory_ranges(void)
 	 * First read all memory regions that can be considered as
 	 * system memory including the crash area.
 	 */
-	if (!usablemem_rgns.size)
-		kexec_iomem_for_each_line(NULL, iomem_range_callback, NULL);
-
-	/* allow only a single region for crash dump kernel */
-	if (usablemem_rgns.size != 1)
+	if (read_mem_regions())
 		return -EINVAL;
 
-	dbgprint_mem_range("Reserved memory range", &crash_reserved_mem, 1);
+	/* allow at max two regions for crash dump kernel */
+	if (usablemem_rgns.size > 2)
+		return -EINVAL;
 
-	if (mem_regions_exclude(&system_memory_rgns, &crash_reserved_mem)) {
+	dbgprint_mem_range("Reserved memory range", crash_reserved_mem, 1);
+
+	if (mem_regions_exclude(&system_memory_rgns, crash_reserved_mem)) {
 		fprintf(stderr,
 			"Error: Number of crash memory ranges excedeed the max limit\n");
 		return -ENOMEM;
 	}
 
+	if (usablemem_rgns.size == 2) {
+		dbgprint_mem_range("Reserved Low memory range",
+				crash_reserved_low_mem, 1);
+		if (mem_regions_exclude(&system_memory_rgns,
+					crash_reserved_low_mem)) {
+			fprintf(stderr,
+				"Error: Number of crash memory ranges excedeed the max limit\n");
+			return -ENOMEM;
+		}
+	}
 	/*
 	 * Make sure that the memory regions are sorted.
 	 */
@@ -199,7 +240,7 @@ int load_crashdump_segments(struct kexec_info *info)
 		return EFAILED;
 
 	elfcorehdr = add_buffer_phys_virt(info, buf, bufsz, bufsz, 0,
-		crash_reserved_mem.start, crash_reserved_mem.end,
+		crash_reserved_mem->start, crash_reserved_mem->end,
 		-1, 0);
 
 	elfcorehdr_mem.start = elfcorehdr;
@@ -217,34 +258,34 @@ int load_crashdump_segments(struct kexec_info *info)
  * virt_to_phys() in add_segment().
  * So let's fix up those values for later use so the memory base
  * (arm64_mm.phys_offset) will be correctly replaced with
- * crash_reserved_mem.start.
+ * crash_reserved_mem->start.
  */
 void fixup_elf_addrs(struct mem_ehdr *ehdr)
 {
 	struct mem_phdr *phdr;
 	int i;
 
-	ehdr->e_entry += - arm64_mem.phys_offset + crash_reserved_mem.start;
+	ehdr->e_entry += - arm64_mem.phys_offset + crash_reserved_mem->start;
 
 	for (i = 0; i < ehdr->e_phnum; i++) {
 		phdr = &ehdr->e_phdr[i];
 		if (phdr->p_type != PT_LOAD)
 			continue;
 		phdr->p_paddr +=
-			(-arm64_mem.phys_offset + crash_reserved_mem.start);
+			(-arm64_mem.phys_offset + crash_reserved_mem->start);
 	}
 }
 
 int get_crash_kernel_load_range(uint64_t *start, uint64_t *end)
 {
-	if (!usablemem_rgns.size)
-		kexec_iomem_for_each_line(NULL, iomem_range_callback, NULL);
-
-	if (!crash_reserved_mem.end)
+	if (read_mem_regions())
 		return -1;
 
-	*start = crash_reserved_mem.start;
-	*end = crash_reserved_mem.end;
+	if (!crash_reserved_mem->end)
+		return -1;
+
+	*start = crash_reserved_mem->start;
+	*end = crash_reserved_mem->end;
 
 	return 0;
 }
