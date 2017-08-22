@@ -33,6 +33,7 @@
 #define PROP_SIZE_CELLS "#size-cells"
 #define PROP_ELFCOREHDR "linux,elfcorehdr"
 #define PROP_USABLE_MEM_RANGE "linux,usable-memory-range"
+#define PROP_USABLE_LOW_MEM_RANGE "linux,usable-low-memory-range"
 
 typedef unsigned long guest_addr_t;
 typedef unsigned long host_addr_t;
@@ -544,6 +545,8 @@ static int setup_2nd_dtb(struct dtb *dtb, char *command_line, int on_crash)
 		new_size = fdt_totalsize(dtb->buf)
 			+ fdt_prop_len(PROP_ELFCOREHDR, range_len)
 			+ fdt_prop_len(PROP_USABLE_MEM_RANGE, range_len);
+		if (crash_reserved_low_mem)
+			new_size += fdt_prop_len(PROP_USABLE_LOW_MEM_RANGE, range_len);
 
 		new_buf = xmalloc(new_size);
 		result = fdt_open_into(dtb->buf, new_buf, new_size);
@@ -576,6 +579,19 @@ static int setup_2nd_dtb(struct dtb *dtb, char *command_line, int on_crash)
 				fdt_strerror(result));
 			result = -EINVAL;
 			goto on_error;
+		}
+
+		if (crash_reserved_low_mem) {
+			nodeoffset = fdt_path_offset(new_buf, "/chosen");
+			result = fdt_setprop_range(new_buf, nodeoffset,
+					PROP_USABLE_LOW_MEM_RANGE, crash_reserved_low_mem,
+					address_cells, size_cells);
+			if (result) {
+				dbgprintf("%s: fdt_setprop failed: %s\n", __func__,
+						fdt_strerror(result));
+				result = -EINVAL;
+				goto on_error;
+			}
 		}
 
 		fdt_pack(new_buf);
